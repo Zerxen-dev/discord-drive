@@ -1,0 +1,20 @@
+{
+  "name": "discord-drive",
+  "version": "1.0.0",
+  "description": "📦 Unlimited Encrypted Cloud Storage & Web Streamer Powered by Discord Attachments",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "discord",
+    "cloud-storage",
+    "cdn",
+    "zero-dependency",
+    "termux",
+    "android",
+    "streaming"
+  ],
+  "author": "Zerxen-dev",
+  "license": "MIT"
+}
