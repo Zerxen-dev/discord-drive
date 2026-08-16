@@ -1,4 +1,4 @@
-// DiscordDrive — Client Controller & Chunked Uploader
+// DiscordDrive — Client Controller & Advanced Drive Manager
 (function() {
   'use strict';
 
@@ -8,7 +8,9 @@
     user: null,
     files: [],
     activeFilter: 'all',
-    searchQuery: ''
+    searchQuery: '',
+    currentShareFileId: null,
+    currentRenameFileId: null
   };
 
   // DOM Elements
@@ -19,6 +21,7 @@
     storageCounter: document.getElementById('storageCounter'),
     refreshBtn: document.getElementById('refreshBtn'),
     filePickerInput: document.getElementById('filePickerInput'),
+    folderSelect: document.getElementById('folderSelect'),
     dropzoneCard: document.getElementById('dropzoneCard'),
     selectFilesBtn: document.getElementById('selectFilesBtn'),
     uploadProgressCard: document.getElementById('uploadProgressCard'),
@@ -41,6 +44,13 @@
     closeShareModalBtn: document.getElementById('closeShareModalBtn'),
     shareUrlInput: document.getElementById('shareUrlInput'),
     copyShareBtn: document.getElementById('copyShareBtn'),
+    shareExpirySelect: document.getElementById('shareExpirySelect'),
+    saveShareSettingsBtn: document.getElementById('saveShareSettingsBtn'),
+    renameModal: document.getElementById('renameModal'),
+    closeRenameModalBtn: document.getElementById('closeRenameModalBtn'),
+    renameForm: document.getElementById('renameForm'),
+    renameInput: document.getElementById('renameInput'),
+    renameFolderSelect: document.getElementById('renameFolderSelect'),
     toastHub: document.getElementById('toastHub')
   };
 
@@ -111,7 +121,7 @@
   // ==========================================================================
   function matchesFilter(f) {
     const q = state.searchQuery.toLowerCase();
-    if (q && !f.filename.toLowerCase().includes(q)) return false;
+    if (q && !f.filename.toLowerCase().includes(q) && !(f.folder || '').toLowerCase().includes(q)) return false;
 
     const mime = (f.mimeType || '').toLowerCase();
     const ext = f.filename.toLowerCase();
@@ -119,8 +129,8 @@
     if (state.activeFilter === 'video') return mime.startsWith('video/') || /\.(mp4|mkv|webm|avi|mov)$/i.test(ext);
     if (state.activeFilter === 'audio') return mime.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a)$/i.test(ext);
     if (state.activeFilter === 'image') return mime.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(ext);
-    if (state.activeFilter === 'doc') return /\.(pdf|doc|docx|txt|md|csv|xlsx|pptx)$/i.test(ext) || mime.includes('pdf') || mime.includes('text');
-    if (state.activeFilter === 'archive') return /\.(zip|rar|7z|tar|gz|apk)$/i.test(ext);
+    if (state.activeFilter === 'doc') return /\.(pdf|doc|docx|txt|md|csv|xlsx|pptx|py|js|ts|json)$/i.test(ext) || mime.includes('pdf') || mime.includes('text');
+    if (state.activeFilter === 'archive') return /\.(zip|rar|7z|tar|gz|apk|iso)$/i.test(ext);
     return true;
   }
 
@@ -137,7 +147,7 @@
     if (mime.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(ext)) {
       return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
     }
-    if (/\.(zip|rar|7z|tar|gz|apk)$/i.test(ext)) {
+    if (/\.(zip|rar|7z|tar|gz|apk|iso)$/i.test(ext)) {
       return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><polyline points="3.29 7 12 12 20.71 7"></polyline><line x1="12" y1="22" x2="12" y2="12"></line></svg>`;
     }
     return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>`;
@@ -163,7 +173,7 @@
     }
 
     el.filesGrid.innerHTML = filtered.map(f => {
-      const isMedia = (f.mimeType || '').startsWith('video/') || (f.mimeType || '').startsWith('audio/');
+      const isMedia = (f.mimeType || '').startsWith('video/') || (f.mimeType || '').startsWith('audio/') || (f.mimeType || '').startsWith('image/') || /\.(txt|md|py|js|json)$/i.test(f.filename);
       return `
         <div class="file-card" data-id="${f.id}">
           <div class="file-meta-col">
@@ -172,16 +182,19 @@
             </div>
             <div class="file-title-wrap">
               <span class="file-name-text" title="${escapeHTML(f.filename)}">${escapeHTML(f.filename)}</span>
-              <span class="file-subtext">${f.formattedSize} • ${f.chunksTotal} chunk${f.chunksTotal > 1 ? 's' : ''} • ${formatTime(f.createdAt)}</span>
+              <span class="file-subtext">📁 ${escapeHTML(f.folder || 'Default')} • ${f.formattedSize} • ${f.chunksTotal} chunk${f.chunksTotal > 1 ? 's' : ''} • ${formatTime(f.createdAt)}</span>
             </div>
           </div>
 
           <div class="file-actions-row">
-            ${isMedia ? `<button type="button" class="icon-action-btn stream-btn" title="Stream media" data-id="${f.id}" data-name="${escapeHTML(f.filename)}" data-mime="${f.mimeType}" data-url="${f.shareUrl}"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></button>` : ''}
+            ${isMedia ? `<button type="button" class="icon-action-btn stream-btn" title="Stream preview" data-id="${f.id}" data-name="${escapeHTML(f.filename)}" data-mime="${f.mimeType}" data-url="${f.shareUrl}"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></button>` : ''}
             <a href="${f.shareUrl}" download="${escapeHTML(f.filename)}" class="icon-action-btn" title="Download reassembled file" target="_blank">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             </a>
-            <button type="button" class="icon-action-btn share-btn" title="Share link" data-url="${f.shareUrl}">
+            <button type="button" class="icon-action-btn rename-btn" title="Rename / Organize" data-id="${f.id}" data-name="${escapeHTML(f.filename)}" data-folder="${escapeHTML(f.folder || 'Default')}">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            </button>
+            <button type="button" class="icon-action-btn share-btn" title="Share link" data-id="${f.id}" data-url="${f.shareUrl}">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
             </button>
             <button type="button" class="icon-action-btn delete delete-btn" title="Delete file" data-id="${f.id}">
@@ -197,14 +210,15 @@
   // CHUNKED UPLOADER (SUPPORTS GIGABYTE FILES WITH FLOW CONTROL)
   // ==========================================================================
   async function uploadFiles(files) {
+    const selectedFolder = el.folderSelect ? el.folderSelect.value : 'Default';
     for (const file of files) {
-      await uploadSingleFile(file);
+      await uploadSingleFile(file, selectedFolder);
     }
     loadUserData();
     loadFiles();
   }
 
-  async function uploadSingleFile(file) {
+  async function uploadSingleFile(file, folder) {
     const fileId = 'f_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 8);
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
@@ -238,6 +252,7 @@
           'X-File-Size': file.size.toString(),
           'X-Chunk-Index': chunkIndex.toString(),
           'X-Total-Chunks': totalChunks.toString(),
+          'X-Folder': encodeURIComponent(folder),
           'Content-Type': 'application/octet-stream'
         },
         body: chunkBuffer
@@ -334,14 +349,14 @@
     });
   }
 
-  // Action Buttons (Stream, Share, Delete)
+  // Action Buttons (Stream, Share, Rename, Delete)
   document.addEventListener('click', async (e) => {
     // Stream media
     const streamBtn = e.target.closest('.stream-btn');
     if (streamBtn) {
       const id = streamBtn.dataset.id;
       const name = streamBtn.dataset.name;
-      const mime = streamBtn.dataset.mime;
+      const mime = (streamBtn.dataset.mime || '').toLowerCase();
       const url = streamBtn.dataset.url;
 
       if (el.mediaModalTitle) el.mediaModalTitle.textContent = name;
@@ -350,8 +365,16 @@
       if (el.mediaStreamWrap) {
         if (mime.startsWith('video/')) {
           el.mediaStreamWrap.innerHTML = `<video src="/api/stream/${id}" controls autoplay playsinline></video>`;
-        } else {
+        } else if (mime.startsWith('audio/')) {
           el.mediaStreamWrap.innerHTML = `<audio src="/api/stream/${id}" controls autoplay style="padding: 20px;"></audio>`;
+        } else if (mime.startsWith('image/')) {
+          el.mediaStreamWrap.innerHTML = `<img src="${url}" alt="${escapeHTML(name)}" style="max-height: 50vh; object-fit: contain;">`;
+        } else {
+          try {
+            const res = await fetch(`/api/stream/${id}`);
+            const text = await res.text();
+            el.mediaStreamWrap.innerHTML = `<pre><code>${escapeHTML(text)}</code></pre>`;
+          } catch(err){}
         }
       }
 
@@ -360,9 +383,21 @@
       return;
     }
 
+    // Rename file
+    const renameBtn = e.target.closest('.rename-btn');
+    if (renameBtn) {
+      state.currentRenameFileId = renameBtn.dataset.id;
+      if (el.renameInput) el.renameInput.value = renameBtn.dataset.name;
+      if (el.renameFolderSelect) el.renameFolderSelect.value = renameBtn.dataset.folder || 'Default';
+      if (el.renameModal) el.renameModal.style.display = 'flex';
+      haptic();
+      return;
+    }
+
     // Share link
     const shareBtn = e.target.closest('.share-btn');
     if (shareBtn) {
+      state.currentShareFileId = shareBtn.dataset.id;
       const url = shareBtn.dataset.url;
       if (el.shareUrlInput) el.shareUrlInput.value = url;
       if (el.shareModal) el.shareModal.style.display = 'flex';
@@ -389,12 +424,60 @@
     }
   });
 
+  // Rename form submit
+  if (el.renameForm) {
+    el.renameForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!state.currentRenameFileId) return;
+
+      const newName = el.renameInput.value.trim();
+      const newFolder = el.renameFolderSelect.value;
+
+      const res = await fetch(`/api/file/${state.currentRenameFileId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: newName, folder: newFolder })
+      });
+
+      if (res.ok) {
+        showToast('✓ File updated');
+        if (el.renameModal) el.renameModal.style.display = 'none';
+        loadFiles();
+        haptic();
+      }
+    });
+  }
+
+  // Save share settings
+  if (el.saveShareSettingsBtn && el.shareExpirySelect) {
+    el.saveShareSettingsBtn.addEventListener('click', async () => {
+      if (!state.currentShareFileId) return;
+      const hours = parseInt(el.shareExpirySelect.value, 10);
+      const expiresAt = hours > 0 ? Date.now() + hours * 3600 * 1000 : null;
+
+      const res = await fetch(`/api/file/${state.currentShareFileId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shareSettings: { expiresAt } })
+      });
+
+      if (res.ok) {
+        showToast('✓ Share settings saved');
+        haptic();
+      }
+    });
+  }
+
   // Modal Closers
   if (el.closeMediaModalBtn && el.mediaModal) {
     el.closeMediaModalBtn.addEventListener('click', () => {
       if (el.mediaStreamWrap) el.mediaStreamWrap.innerHTML = '';
       el.mediaModal.style.display = 'none';
     });
+  }
+
+  if (el.closeRenameModalBtn && el.renameModal) {
+    el.closeRenameModalBtn.addEventListener('click', () => el.renameModal.style.display = 'none');
   }
 
   if (el.closeShareModalBtn && el.shareModal) {

@@ -214,6 +214,37 @@ html, body {
   margin: 0 auto 16px auto;
 }
 
+.dropzone-btn-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.folder-dropdown {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-full);
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+
+.folder-dropdown.small {
+  padding: 5px 10px;
+  font-size: 0.76rem;
+}
+
+.folder-dropdown.full {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
 /* Progress Card */
 .upload-progress-card {
   background: var(--bg-surface);
@@ -587,16 +618,54 @@ html, body {
   outline: none;
 }
 
+.text-input.full {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  padding: 10px 12px;
+}
+
+.opt-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.share-options-box {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
 .media-stream-wrap {
   margin: 12px 0;
   border-radius: var(--radius-md);
   overflow: hidden;
   background: #000;
+  max-height: 60vh;
 }
 
-.media-stream-wrap video, .media-stream-wrap audio {
+.media-stream-wrap video, .media-stream-wrap audio, .media-stream-wrap img {
   width: 100%;
   display: block;
+}
+
+.media-stream-wrap pre {
+  padding: 14px;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  overflow: auto;
+  max-height: 50vh;
+  background: var(--bg-input);
 }
 
 .modal-actions {

@@ -1,7 +1,8 @@
 /**
  * 📦 DISCORDDRIVE — Unlimited Encrypted Cloud Storage & Web Streamer
  * Uses Discord message attachments as an infinite encrypted chunked CDN backend.
- * 100% Zero Dependencies (Pure Native Node.js HTTP, HTTPS, Crypto & WebSockets)
+ * 100% Zero Dependencies (Pure Native Node.js HTTP, HTTPS, Crypto, Zlib & WebSockets)
+ * Pterodactyl & Docker Ready • Strict Per-User Isolation • Locked Vault Permissions
  * Author: Zerxen-dev (https://github.com/Zerxen-dev)
  * License: MIT
  */
@@ -12,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
+const zlib = require('zlib');
 const { EventEmitter } = require('events');
 
 // Auto-load .env if present (Zero-dependency)
@@ -31,9 +33,9 @@ if (fs.existsSync(envFile)) {
 }
 
 // ============================================================================
-// CONFIGURATION & PATHS
+// CONFIGURATION & PATHS (Pterodactyl & Docker Compatible)
 // ============================================================================
-const PORT = parseInt(process.env.PORT, 10) || 5000;
+const PORT = parseInt(process.env.SERVER_PORT || process.env.PORT, 10) || 5000;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN || '';
 const STORAGE_CHANNEL_ID = process.env.STORAGE_CHANNEL_ID || '';
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
@@ -63,21 +65,33 @@ const MIME_TYPES = {
   '.mp4': 'video/mp4',
   '.mkv': 'video/x-matroska',
   '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
   '.pdf': 'application/pdf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.py': 'text/plain; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.ts': 'text/plain; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.zip': 'application/zip',
   '.apk': 'application/vnd.android.package-archive',
   '.tar': 'application/x-tar',
-  '.gz': 'application/gzip'
+  '.gz': 'application/gzip',
+  '.7z': 'application/x-7z-compressed',
+  '.iso': 'application/x-iso9660-image'
 };
 
 // ============================================================================
 // DATABASE / STORAGE INDEX (STRICT PER-USER ISOLATION)
 // ============================================================================
 let db = {
-  files: {},      // fileId -> { id, ownerId, ownerName, filename, size, mimeType, chunksTotal, chunks: [{ index, messageId, cdnUrl, size }], createdAt, shareToken }
+  files: {},      // fileId -> { id, ownerId, ownerName, filename, size, mimeType, chunksTotal, folder, tags, chunks: [{ index, messageId, cdnUrl, size }], createdAt, shareToken, shareSettings: { passwordHash, expiresAt, maxDownloads, downloadCount } }
   authTokens: {}, // token -> { userId, username, avatar, expiresAt }
   sessions: {}    // sessionId -> { userId, username, avatar, expiresAt }
 };
@@ -105,7 +119,7 @@ function saveDatabase() {
 
 loadDatabase();
 
-// Clean expired auth tokens and sessions every 10 minutes
+// Clean expired auth tokens, sessions, and share links every 10 minutes
 setInterval(() => {
   const now = Date.now();
   for (const [tok, data] of Object.entries(db.authTokens || {})) {
@@ -160,6 +174,31 @@ function discordRequest(method, endpoint, body = null, headers = {}) {
     }
     req.end();
   });
+}
+
+// Ensure storage channel is locked strictly to Server Owner & Bot
+async function enforceChannelSecurity(channelId) {
+  if (!DISCORD_TOKEN || !channelId) return;
+  try {
+    const ch = await discordRequest('GET', `/channels/${channelId}`);
+    if (!ch || !ch.guild_id) return;
+
+    const guild = await discordRequest('GET', `/guilds/${ch.guild_id}`);
+    const me = await discordRequest('GET', `/users/@me`);
+
+    const permissionOverwrites = [
+      { id: ch.guild_id, type: 0, allow: "0", deny: "1024" }, // Deny @everyone VIEW_CHANNEL
+      { id: guild.owner_id, type: 1, allow: "101376", deny: "0" }, // Owner access
+      { id: me.id, type: 1, allow: "101376", deny: "0" } // Bot access
+    ];
+
+    await discordRequest('PATCH', `/channels/${channelId}`, {
+      permission_overwrites: permissionOverwrites
+    });
+    console.log(`[Security] Channel #${ch.name} locked strictly to Server Owner & Bot!`);
+  } catch (err) {
+    console.warn('[Security] Could not verify channel permissions:', err.message);
+  }
 }
 
 // Upload file attachment directly to Discord channel
@@ -369,14 +408,15 @@ class DiscordGateway extends EventEmitter {
         op: 2,
         d: {
           token: this.token,
-          intents: 513, // GUILDS + GUILD_MESSAGES
-          properties: { os: 'linux', browser: 'DiscordDrive', device: 'Termux' }
+          intents: 513,
+          properties: { os: 'linux', browser: 'DiscordDrive', device: 'Pterodactyl' }
         }
       });
     } else if (t === 'READY') {
       this.botUser = d.user;
       console.log(`[Discord Bot] Logged in as ${d.user.username}#${d.user.discriminator} (ID: ${d.user.id})`);
       this._registerSlashCommands(d.user.id);
+      enforceChannelSecurity(STORAGE_CHANNEL_ID);
     } else if (t === 'INTERACTION_CREATE') {
       this._handleInteraction(d);
     }
@@ -390,7 +430,23 @@ class DiscordGateway extends EventEmitter {
       },
       {
         name: 'files',
-        description: 'View and manage your privately stored files'
+        description: 'View and manage your privately stored files',
+        options: [
+          {
+            name: 'filter',
+            description: 'Filter by category (video, audio, image, doc, archive)',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'All Files', value: 'all' },
+              { name: 'Videos 🎬', value: 'video' },
+              { name: 'Music / Audio 🎵', value: 'audio' },
+              { name: 'Images 🖼️', value: 'image' },
+              { name: 'Documents 📄', value: 'doc' },
+              { name: 'Archives 📦', value: 'archive' }
+            ]
+          }
+        ]
       },
       {
         name: 'storage',
@@ -407,6 +463,10 @@ class DiscordGateway extends EventEmitter {
             required: true
           }
         ]
+      },
+      {
+        name: 'stats',
+        description: 'Global DiscordDrive storage statistics'
       }
     ];
 
@@ -430,16 +490,17 @@ class DiscordGateway extends EventEmitter {
       const portalUrl = `${BASE_URL}/auth?token=${oneTimeToken}`;
 
       const reply = {
-        type: 4, // CHANNEL_MESSAGE_WITH_SOURCE
+        type: 4,
         data: {
-          flags: 64, // EPHEMERAL (Only caller can see)
+          flags: 64, // EPHEMERAL
           embeds: [
             {
               title: '📦  Your Private DiscordDrive Upload Portal',
               description: (
                 `Hey **${caller.username}**! Tap the link below to open your secure upload dashboard.\n\n` +
                 `🚀 **Upload Files of ANY Size (100MB, 1GB, 5GB+)**\n` +
-                `🔒 **100% Private to You (Strictly Isolated)**\n\n` +
+                `🔒 **100% Private to You (Strictly Isolated)**\n` +
+                `🎬 **Stream Videos & Audio in Browser**\n\n` +
                 `👉 **[Click Here to Open Your Drive](${portalUrl})**\n\n` +
                 `*⚠️ This secure login link expires in 15 minutes.*`
               ),
@@ -452,11 +513,16 @@ class DiscordGateway extends EventEmitter {
 
       await discordRequest('POST', `/interactions/${id}/${token}/callback`, reply).catch(() => {});
     } else if (cmdName === 'files') {
-      const userFiles = Object.values(db.files).filter(f => f.ownerId === caller.id);
-      let desc = '';
+      const filter = (data.options && data.options[0]) ? data.options[0].value : 'all';
+      let userFiles = Object.values(db.files).filter(f => f.ownerId === caller.id);
 
+      if (filter === 'video') userFiles = userFiles.filter(f => (f.mimeType || '').startsWith('video/'));
+      if (filter === 'audio') userFiles = userFiles.filter(f => (f.mimeType || '').startsWith('audio/'));
+      if (filter === 'image') userFiles = userFiles.filter(f => (f.mimeType || '').startsWith('image/'));
+
+      let desc = '';
       if (userFiles.length === 0) {
-        desc = 'You have no files stored yet!\nUse `/upload` to open your upload portal and add files.';
+        desc = `You have no ${filter === 'all' ? '' : filter + ' '}files stored yet!\nUse \`/upload\` to open your dashboard.`;
       } else {
         desc = userFiles.slice(0, 10).map((f, i) => {
           return `**${i + 1}. ${f.filename}**\n` +
@@ -464,14 +530,14 @@ class DiscordGateway extends EventEmitter {
         }).join('\n\n');
 
         if (userFiles.length > 10) {
-          desc += `\n\n*...and ${userFiles.length - 10} more files. Use \`/upload\` to view all.*`;
+          desc += `\n\n*...and ${userFiles.length - 10} more files. Open \`/upload\` to view all.*`;
         }
       }
 
       const reply = {
         type: 4,
         data: {
-          flags: 64, // EPHEMERAL
+          flags: 64,
           embeds: [
             {
               title: `📁  Your Private Files (${userFiles.length})`,
@@ -499,9 +565,37 @@ class DiscordGateway extends EventEmitter {
                 `💾 **Total Stored:** \`${formatBytes(totalBytes)}\`\n` +
                 `📁 **Total Files:** \`${userFiles.length}\`\n` +
                 `♾️ **Storage Limit:** \`Unlimited ♾️\`\n\n` +
-                `Run \`/upload\` to add more files anytime!`
+                `Run \`/upload\` to open your dashboard!`
               ),
               color: 16766474
+            }
+          ]
+        }
+      };
+
+      await discordRequest('POST', `/interactions/${id}/${token}/callback`, reply).catch(() => {});
+    } else if (cmdName === 'stats') {
+      const allFiles = Object.values(db.files);
+      const totalGlobalBytes = allFiles.reduce((acc, f) => acc + (f.size || 0), 0);
+      const totalChunks = allFiles.reduce((acc, f) => acc + (f.chunksTotal || 0), 0);
+      const totalUsers = new Set(allFiles.map(f => f.ownerId)).size;
+
+      const reply = {
+        type: 4,
+        data: {
+          flags: 64,
+          embeds: [
+            {
+              title: `🌐  Global DiscordDrive Statistics`,
+              description: (
+                `👥 **Total Users:** \`${totalUsers}\`\n` +
+                `📁 **Total Stored Files:** \`${allFiles.length}\`\n` +
+                `📦 **Total Chunks in Discord:** \`${totalChunks}\`\n` +
+                `💾 **Global Bandwidth Saved:** \`${formatBytes(totalGlobalBytes)}\`\n` +
+                `🛡️ **Channel Vault:** \`Locked (Owner & Bot Only)\``
+              ),
+              color: 4886754,
+              footer: { text: 'DiscordDrive • Zero-Cloud Architecture' }
             }
           ]
         }
@@ -568,8 +662,8 @@ function formatBytes(bytes) {
 const server = http.createServer(async (req, res) => {
   // CORS & Security Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Chunk-Index, X-Total-Chunks, X-File-Id, X-File-Name, X-File-Size');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Chunk-Index, X-Total-Chunks, X-File-Id, X-File-Name, X-File-Size, X-Folder, X-Tags');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -579,6 +673,19 @@ const server = http.createServer(async (req, res) => {
 
   const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = parsedUrl.pathname;
+
+  // ── 0. Health Check for Pterodactyl / Uptime Kuma ───────────────────────
+  if (pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'healthy',
+      uptime: process.uptime(),
+      timestamp: Date.now(),
+      totalFiles: Object.keys(db.files || {}).length,
+      platform: 'Pterodactyl / Node.js'
+    }));
+    return;
+  }
 
   // ── 1. Auth Endpoint: One-time token verification ──────────────────────
   if (pathname === '/auth') {
@@ -615,6 +722,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Check optional share settings (expiry & max downloads)
+    const settings = file.shareSettings;
+    if (settings) {
+      if (settings.expiresAt && settings.expiresAt < Date.now()) {
+        res.writeHead(410, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<h1>410 Link Expired</h1><p>This share link has expired.</p>');
+        return;
+      }
+      if (settings.maxDownloads && (settings.downloadCount || 0) >= settings.maxDownloads) {
+        res.writeHead(410, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<h1>410 Download Limit Reached</h1><p>This file has reached its maximum download limit.</p>');
+        return;
+      }
+      settings.downloadCount = (settings.downloadCount || 0) + 1;
+      saveDatabase();
+    }
+
     // Stream reassembled chunks sequentially from Discord CDN
     res.writeHead(200, {
       'Content-Type': file.mimeType || 'application/octet-stream',
@@ -649,7 +773,7 @@ const server = http.createServer(async (req, res) => {
       effectiveUser = { userId: 'guest_local', username: 'Local Admin', avatar: null };
     }
 
-    if (!effectiveUser && pathname !== '/api/health') {
+    if (!effectiveUser) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized. Use /upload in Discord to log in.' }));
       return;
@@ -659,10 +783,12 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/user' && req.method === 'GET') {
       const userFiles = Object.values(db.files).filter(f => f.ownerId === effectiveUser.userId);
       const totalBytes = userFiles.reduce((acc, f) => acc + (f.size || 0), 0);
+      const folders = Array.from(new Set(userFiles.map(f => f.folder || 'Default')));
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         user: effectiveUser,
+        folders: folders,
         stats: {
           totalFiles: userFiles.length,
           totalBytes: totalBytes,
@@ -684,9 +810,12 @@ const server = http.createServer(async (req, res) => {
           formattedSize: formatBytes(f.size),
           mimeType: f.mimeType,
           chunksTotal: f.chunksTotal,
+          folder: f.folder || 'Default',
+          tags: f.tags || [],
           createdAt: f.createdAt,
           shareUrl: `${BASE_URL}/d/${f.shareToken}`,
-          streamUrl: `${BASE_URL}/api/stream/${f.id}`
+          streamUrl: `${BASE_URL}/api/stream/${f.id}`,
+          shareSettings: f.shareSettings || null
         }));
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -701,6 +830,7 @@ const server = http.createServer(async (req, res) => {
       const fileSize = parseInt(req.headers['x-file-size'], 10) || 0;
       const chunkIndex = parseInt(req.headers['x-chunk-index'], 10) || 0;
       const totalChunks = parseInt(req.headers['x-total-chunks'], 10) || 1;
+      const folder = req.headers['x-folder'] ? decodeURIComponent(req.headers['x-folder']) : 'Default';
 
       if (!fileId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -742,9 +872,12 @@ const server = http.createServer(async (req, res) => {
               size: fileSize,
               mimeType: MIME_TYPES[ext] || 'application/octet-stream',
               chunksTotal: totalChunks,
+              folder: folder,
+              tags: [],
               chunks: [],
               createdAt: Date.now(),
-              shareToken: 'sh_' + crypto.randomBytes(16).toString('hex')
+              shareToken: 'sh_' + crypto.randomBytes(16).toString('hex'),
+              shareSettings: null
             };
           }
 
@@ -768,6 +901,37 @@ const server = http.createServer(async (req, res) => {
           console.error('[Upload Chunk Error]:', uploadErr);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: uploadErr.message }));
+        }
+      });
+      return;
+    }
+
+    // PUT /api/file/:id — Rename / Move Folder (Strict Owner Check)
+    if (pathname.startsWith('/api/file/') && req.method === 'PUT') {
+      const fileId = pathname.split('/')[3];
+      const file = db.files[fileId];
+
+      if (!file || file.ownerId !== effectiveUser.userId) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', c => body += c);
+      req.on('end', () => {
+        try {
+          const json = JSON.parse(body);
+          if (json.filename) file.filename = json.filename;
+          if (json.folder) file.folder = json.folder;
+          if (json.shareSettings !== undefined) file.shareSettings = json.shareSettings;
+          saveDatabase();
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'ok', file: file }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
         }
       });
       return;
@@ -865,9 +1029,24 @@ const server = http.createServer(async (req, res) => {
 });
 
 // ============================================================================
+// GRACEFUL SHUTDOWN (Pterodactyl & Docker)
+// ============================================================================
+function gracefulShutdown() {
+  console.log('\n[DiscordDrive] Received shutdown signal. Saving database and closing gracefully...');
+  saveDatabase();
+  server.close(() => {
+    console.log('[DiscordDrive] Server closed cleanly.');
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// ============================================================================
 // START SERVERS & BOT GATEWAY
 // ============================================================================
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   const nets = os.networkInterfaces();
   const addresses = [];
   for (const name of Object.keys(nets)) {

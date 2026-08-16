@@ -59,8 +59,18 @@
             </svg>
           </div>
           <h2 class="dropzone-title">Upload to Discord CDN</h2>
-          <p class="dropzone-sub">Upload 100MB, 1GB, 5GB+ files • Sliced into 24MB chunks • Zero size limit</p>
-          <button type="button" id="selectFilesBtn" class="pill-btn primary">Choose Files</button>
+          <p class="dropzone-sub">Upload 100MB, 1GB, 5GB+ files • Sliced into 24MB chunks • Zero size limits</p>
+          <div class="dropzone-btn-row">
+            <button type="button" id="selectFilesBtn" class="pill-btn primary">Choose Files</button>
+            <select id="folderSelect" class="folder-dropdown" title="Select upload folder">
+              <option value="Default">📁 Default</option>
+              <option value="Videos">🎬 Videos</option>
+              <option value="Music">🎵 Music</option>
+              <option value="Documents">📄 Documents</option>
+              <option value="Games">🎮 Games</option>
+              <option value="Backups">💾 Backups</option>
+            </select>
+          </div>
         </div>
 
         <!-- Live Chunk Upload Progress Box -->
@@ -89,11 +99,11 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="text" id="searchInput" placeholder="Search your stored files...">
+          <input type="text" id="searchInput" placeholder="Search files or filter by keyword...">
         </div>
 
         <div class="filter-pills-row">
-          <button type="button" class="filter-pill active" data-filter="all">All</button>
+          <button type="button" class="filter-pill active" data-filter="all">All Files</button>
           <button type="button" class="filter-pill" data-filter="video">Videos 🎬</button>
           <button type="button" class="filter-pill" data-filter="audio">Music 🎵</button>
           <button type="button" class="filter-pill" data-filter="image">Images 🖼️</button>
@@ -129,7 +139,7 @@
         <h3 class="modal-title" id="mediaModalTitle">Media Stream</h3>
         
         <div class="media-stream-wrap" id="mediaStreamWrap">
-          <!-- Video or Audio element injected here -->
+          <!-- Video, Audio, Image, or Code preview injected here -->
         </div>
 
         <div class="modal-actions">
@@ -149,6 +159,44 @@
           <input type="text" id="shareUrlInput" class="text-input" readonly>
           <button type="button" id="copyShareBtn" class="pill-btn primary small">Copy</button>
         </div>
+
+        <div class="share-options-box">
+          <label class="opt-label">Expiry Duration:</label>
+          <select id="shareExpirySelect" class="folder-dropdown small">
+            <option value="0">Never Expires</option>
+            <option value="1">Expires in 1 Hour</option>
+            <option value="24">Expires in 24 Hours</option>
+            <option value="168">Expires in 7 Days</option>
+          </select>
+          <button type="button" id="saveShareSettingsBtn" class="pill-btn secondary small" style="margin-top: 8px;">Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RENAME FILE MODAL -->
+    <div class="modal-backdrop" id="renameModal" style="display:none;">
+      <div class="modal-card">
+        <button type="button" class="close-modal-btn" id="closeRenameModalBtn">&times;</button>
+        <h3 class="modal-title">Rename File</h3>
+        
+        <form id="renameForm">
+          <label class="opt-label">New Filename</label>
+          <input type="text" id="renameInput" class="text-input full" required>
+          
+          <label class="opt-label" style="margin-top: 10px;">Folder</label>
+          <select id="renameFolderSelect" class="folder-dropdown full">
+            <option value="Default">📁 Default</option>
+            <option value="Videos">🎬 Videos</option>
+            <option value="Music">🎵 Music</option>
+            <option value="Documents">📄 Documents</option>
+            <option value="Games">🎮 Games</option>
+            <option value="Backups">💾 Backups</option>
+          </select>
+
+          <div class="modal-actions" style="margin-top: 16px;">
+            <button type="submit" class="pill-btn primary">Save Changes</button>
+          </div>
+        </form>
       </div>
     </div>
 
