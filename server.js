@@ -14,6 +14,22 @@ const crypto = require('crypto');
 const os = require('os');
 const { EventEmitter } = require('events');
 
+// Auto-load .env if present (Zero-dependency)
+const envFile = path.join(__dirname, '.env');
+if (fs.existsSync(envFile)) {
+  const lines = fs.readFileSync(envFile, 'utf8').split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx !== -1) {
+      const key = trimmed.slice(0, idx).trim();
+      const val = trimmed.slice(idx + 1).trim();
+      if (!process.env[key]) process.env[key] = val;
+    }
+  }
+}
+
 // ============================================================================
 // CONFIGURATION & PATHS
 // ============================================================================
@@ -112,6 +128,10 @@ function discordRequest(method, endpoint, body = null, headers = {}) {
       'User-Agent': 'DiscordDrive (https://github.com/Zerxen-dev/discord-drive, 1.0.0)',
       ...headers
     };
+
+    if (body && !reqHeaders['Content-Type']) {
+      reqHeaders['Content-Type'] = 'application/json';
+    }
 
     const req = https.request(url, {
       method: method,
@@ -227,18 +247,6 @@ class DiscordGateway extends EventEmitter {
       return;
     }
 
-    const ws = new (require('https').request)({
-      host: 'gateway.discord.gg',
-      path: '/?v=10&encoding=json',
-      headers: {
-        'Upgrade': 'websocket',
-        'Connection': 'Upgrade',
-        'Sec-WebSocket-Key': crypto.randomBytes(16).toString('base64'),
-        'Sec-WebSocket-Version': '13'
-      }
-    });
-
-    // Native RFC 6455 WebSocket client
     const socket = require('tls').connect({
       host: 'gateway.discord.gg',
       port: 443,
